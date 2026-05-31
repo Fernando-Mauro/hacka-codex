@@ -45,11 +45,9 @@ app = FastAPI(
     "Operations Center.",
 )
 
-# The Next.js frontend runs on :3000 in dev. Allow it (and common local hosts).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
