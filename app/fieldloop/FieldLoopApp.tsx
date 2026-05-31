@@ -127,7 +127,7 @@ export default function FieldLoopApp() {
       <header className="fl-header">
         <div className="fl-brand">
           <span className="fl-brand__mark" aria-hidden="true" />
-          <span className="fl-brand__name">FieldLoop</span>
+          <span className="fl-brand__name">Prediction Center</span>
         </div>
         <ViewToggle view={view} setView={setView} />
         <div className="fl-headright">
