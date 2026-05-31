@@ -613,12 +613,100 @@ h1{ font-size:24px; font-weight:700; letter-spacing:-0.02em; white-space:nowrap;
 .fl-wday__prob{ font-size:12px; font-weight:600; }
 .fl-wday__date{ font-size:10.5px; color:var(--faint); }
 
-/* responsive */
+/* ─── Responsive ───────────────────────────────── */
 @media (max-width:1080px){
   .fl-manager{ grid-template-columns:1fr 340px; }
   .fl-sync__text{ display:none; }
   .fl-report__cols{ grid-template-columns:1fr; }
 }
-@media (max-width:560px){
+
+/* ── Mobile (≤767px) ──────────────────────────── */
+@media (max-width:767px){
+  :root{ --hpad:14px; }
+  h1{ font-size:18px; white-space:normal; }
+
+  /* Header: brand+weather first row, tabs scrollable second row */
+  .fl-header{
+    height:auto; flex-wrap:wrap;
+    padding:0; gap:0;
+  }
+  .fl-brand{ padding:10px 14px; }
+  .fl-headright{
+    margin-left:0; padding:10px 14px 10px 0; gap:10px;
+  }
+  .fl-sync{ display:none; }
+  .fl-toggle{
+    order:10; width:100%; flex-shrink:0;
+    border-radius:0; border:none; border-top:1px solid var(--line);
+    background:var(--bg-2); padding:5px 10px;
+    overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  }
+  .fl-toggle::-webkit-scrollbar{ display:none; }
+  .fl-toggle__btn{ padding:7px 14px; font-size:13px; flex-shrink:0; }
+
+  /* Manager & Editor: vertical stack, parent scrolls */
+  .fl-manager{
+    display:flex; flex-direction:column;
+    overflow-y:auto;
+    /* height:100% is inherited from desktop rule — keeps scroll container */
+  }
+  .fl-manager__mapcol{
+    flex:0 0 auto; height:52vh;
+    padding:10px 14px 0;
+  }
+  .fl-manager__maphead{
+    flex-direction:column; align-items:flex-start;
+    gap:6px; margin-bottom:8px;
+  }
+  .fl-legend{ display:none; }
+
+  /* Engine panel: natural height, parent handles scroll */
+  .fl-engine{
+    border-left:none; border-top:1px solid var(--line);
+    display:block;
+  }
+  .fl-engine__scroll{ padding:16px; gap:14px; }
+
+  /* Timeline: compact, fits inside the map area */
+  .fl-timeline{ padding:9px 11px; gap:10px; bottom:8px; }
+  .fl-tl__play{ width:36px; height:36px; font-size:12px; }
+  .fl-tl__title{ display:none; }
+  .fl-tl__top{ justify-content:flex-end; }
+  .fl-tl__scnbtn{ padding:4px 8px; font-size:11px; }
+
+  /* Operator view */
+  .fl-operator{ padding:16px; }
+  .fl-opcard{ padding:20px 18px 16px; border-radius:18px; }
+  .fl-opcard__now{ font-size:32px; }
+  .fl-opcard__action{ font-size:15px; margin-top:12px; }
+  .fl-optimer__clock{ font-size:24px; }
+  .fl-opcard__timer{ padding:12px 14px; }
+
+  /* Informe */
+  .fl-report__inner{ padding:14px 14px 32px; gap:14px; }
+  .fl-report__head{ flex-direction:column; gap:14px; }
+  .fl-report__controls{ flex:none; width:100%; min-width:0; }
   .fl-kpis{ grid-template-columns:repeat(2,1fr); }
+  .fl-kpi--big .fl-kpi__v{ font-size:22px; }
+  .fl-wdays{ gap:6px; }
+  .fl-wday__bar{ height:52px; }
+
+  /* Cards compact */
+  .fl-regret__big{ font-size:26px; }
+  .fl-sust__grid{ grid-template-columns:1fr 1fr; }
+  .fl-forecast__pct{ font-size:28px; }
+  .fl-forecast__riskn{ font-size:20px; }
+  .fl-edithint{ max-width:100%; text-align:left; }
+  .fl-wpill{ padding:4px 9px; font-size:11px; }
+}
+
+/* ── Small phones (≤479px) ───────────────────────── */
+@media (max-width:479px){
+  .fl-manager__mapcol{ height:48vh; }
+  .fl-toggle__btn{ padding:6px 12px; font-size:12px; }
+  .fl-opcard__meta{ grid-template-columns:1fr 1fr; }
+  .fl-opcard__meta .fl-opmeta:nth-child(3){ grid-column:1/-1; }
+  .fl-report__controls{ flex-direction:column; }
+  .fl-wdays{ grid-template-columns:repeat(4,1fr); }
+  .fl-wday__date{ font-size:9px; }
 }

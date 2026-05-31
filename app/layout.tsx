@@ -18,7 +18,7 @@ const splineMono = Spline_Sans_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FieldLoop — Centro de predicción",
+  title: "Prediction Center",
   description:
     "Capa de decisión predictiva para el manejo de cultivos. Sincronizado con John Deere Operations Center.",
 };
