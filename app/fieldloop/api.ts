@@ -6,8 +6,18 @@
 
 import type { Recommendation, ScenarioKey } from "./data";
 
+// Backend URL resolution, in priority order:
+//   1. NEXT_PUBLIC_API_BASE — set this in Vercel to point anywhere (overrides all).
+//   2. Production build (Vercel) with no env var → the tunneled backend (ngrok).
+//   3. Local dev → localhost (as it works today).
+// So a deploy works out of the box, and you can still redirect it via one env var.
+// NOTE: ngrok-free URLs change on every restart — when the tunnel changes, either
+// update this constant or (better) set NEXT_PUBLIC_API_BASE in Vercel.
+const PROD_API_BASE = "https://9f7e-82-140-171-225.ngrok-free.app";
+
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ||
+  (process.env.NODE_ENV === "production" ? PROD_API_BASE : "http://localhost:8000");
 
 export interface RegretMeter {
   valor_protegido: number;
@@ -102,7 +112,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(API_BASE + path, { ...init, signal: ctrl.signal });
+    const res = await fetch(API_BASE + path, {
+      ...init,
+      // ngrok-free serves an HTML interstitial to browsers; this header makes it
+      // pass the request straight through (harmless for other backends).
+      headers: { "ngrok-skip-browser-warning": "true", ...(init?.headers || {}) },
+      signal: ctrl.signal,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as T;
   } finally {
