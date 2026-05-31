@@ -12,6 +12,8 @@ import React from "react";
 import ManagerView from "./ManagerView";
 import OperatorView from "./OperatorView";
 import EditorView from "./EditorView";
+import ReportView from "./ReportView";
+import { fetchWeather, type WeatherReport } from "./api";
 import { FL_FIELDS, FL_MACHINES, type Field } from "./data";
 
 export interface TweakState {
@@ -26,7 +28,22 @@ const FL_TWEAKS: TweakState = {
   panelPos: "lateral",
 };
 
-type ViewId = "manager" | "operator" | "editor";
+type ViewId = "manager" | "operator" | "editor" | "informe";
+
+function WeatherPill({ w }: { w: WeatherReport | null }) {
+  if (!w) return null;
+  const live = w.fuente === "Open-Meteo";
+  return (
+    <div className={"fl-wpill" + (live ? " is-live" : "")} title={w.resumen}>
+      <span className="fl-wpill__icon" aria-hidden="true">
+        ☔
+      </span>
+      <span className="fl-wpill__txt">
+        {w.rain_eta_h >= 48 ? "Sin lluvia 48 h" : `Lluvia ~${Math.round(w.rain_eta_h)} h`} · {w.rain_prob}%
+      </span>
+    </div>
+  );
+}
 
 function SyncIndicator() {
   return (
@@ -44,6 +61,7 @@ function ViewToggle({ view, setView }: { view: ViewId; setView: (v: ViewId) => v
     { id: "manager", label: "Manager" },
     { id: "operator", label: "Operador" },
     { id: "editor", label: "Editor de lotes" },
+    { id: "informe", label: "Informe" },
   ];
   return (
     <div className="fl-toggle" role="tablist" aria-label="Vista">
@@ -79,6 +97,7 @@ function flLoadFields(): Field[] {
 export default function FieldLoopApp() {
   const [view, setView] = React.useState<ViewId>("manager");
   const [fields, setFields] = React.useState<Field[]>(flLoadFields);
+  const [weather, setWeather] = React.useState<WeatherReport | null>(null);
 
   React.useEffect(() => {
     try {
@@ -88,6 +107,21 @@ export default function FieldLoopApp() {
     }
   }, [fields]);
 
+  // Live weather for the header pill (silently absent if the backend is down).
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchWeather()
+      .then((w) => {
+        if (!cancelled) setWeather(w);
+      })
+      .catch(() => {
+        if (!cancelled) setWeather(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="fl-app" data-view={view}>
       <header className="fl-header">
@@ -96,13 +130,17 @@ export default function FieldLoopApp() {
           <span className="fl-brand__name">FieldLoop</span>
         </div>
         <ViewToggle view={view} setView={setView} />
-        <SyncIndicator />
+        <div className="fl-headright">
+          <WeatherPill w={weather} />
+          <SyncIndicator />
+        </div>
       </header>
 
       <main className="fl-main">
         {view === "manager" && <ManagerView t={FL_TWEAKS} fields={fields} />}
         {view === "operator" && <OperatorView fields={fields} />}
         {view === "editor" && <EditorView fields={fields} machines={FL_MACHINES} setFields={setFields} />}
+        {view === "informe" && <ReportView />}
       </main>
     </div>
   );

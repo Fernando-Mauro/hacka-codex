@@ -16,7 +16,20 @@ import {
   type ScenarioKey,
   type Sustentabilidad,
 } from "./data";
+import { fetchRecommendation, fetchRiskForecast, type EngineRecommendation, type RegretMeter } from "./api";
 import type { TweakState } from "./FieldLoopApp";
+
+const money = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
+
+// Risk arrays from the engine are integers (0..100) at whole days; interpolate
+// for the fractional slider position and normalise to 0..1 for the map.
+function riskAt(arr: number[], day: number): number {
+  const i = Math.floor(day);
+  const f = day - i;
+  const a = arr[Math.min(i, arr.length - 1)];
+  const b = arr[Math.min(i + 1, arr.length - 1)];
+  return (a + (b - a) * f) / 100;
+}
 
 interface FLSliderProps {
   label: string;
@@ -205,6 +218,40 @@ function Timeline({ day, setDay, playing, togglePlay, scenario, setScenario }: T
   );
 }
 
+function RegretCard({ r, simMs }: { r: RegretMeter; simMs?: number }) {
+  return (
+    <div className="fl-regret">
+      <div className="fl-regret__head">
+        <span>Regret Meter</span>
+        {simMs != null && <span className="fl-regret__ms fl-mono">{Math.round(simMs)} ms · Monte Carlo</span>}
+      </div>
+      <div className="fl-regret__hero">
+        <div className="fl-regret__big">{money(r.ahorro_vs_intuicion)}</div>
+        <div className="fl-regret__cap">ahorro vs. orden intuitivo</div>
+      </div>
+      <div className="fl-regret__grid">
+        <div className="fl-regret__cell">
+          <span className="fl-regret__k">Valor protegido</span>
+          <span className="fl-regret__v fl-mono">{money(r.valor_protegido)}</span>
+        </div>
+        <div className="fl-regret__cell">
+          <span className="fl-regret__k">Garantía (P20)</span>
+          <span className="fl-regret__v fl-mono">{money(r.umbral_p20)}</span>
+        </div>
+        <div className="fl-regret__cell">
+          <span className="fl-regret__k">En riesgo</span>
+          <span className="fl-regret__v fl-mono">{money(r.valor_en_riesgo)}</span>
+        </div>
+        <div className="fl-regret__cell">
+          <span className="fl-regret__k">Regret residual</span>
+          <span className="fl-regret__v fl-mono">{money(r.regret_recomendado)}</span>
+        </div>
+      </div>
+      <p className="fl-regret__msg">{r.mensaje}</p>
+    </div>
+  );
+}
+
 interface RecommendationPanelProps {
   ventana: number;
   personal: number;
@@ -214,6 +261,8 @@ interface RecommendationPanelProps {
   onHoverField: (id: string) => void;
   floating: boolean;
   forecast: ForecastData;
+  engine: EngineRecommendation | null;
+  live: boolean;
 }
 
 function RecommendationPanel({
@@ -225,6 +274,8 @@ function RecommendationPanel({
   onHoverField,
   floating,
   forecast,
+  engine,
+  live,
 }: RecommendationPanelProps) {
   return (
     <aside className={"fl-engine" + (floating ? " is-floating" : "")}>
@@ -253,10 +304,17 @@ function RecommendationPanel({
         </div>
 
         <div className="fl-engine__rec">
-          <div className="fl-engine__rectitle">Acción recomendada</div>
+          <div className="fl-engine__rectitle fl-engine__rectitle--row">
+            <span>Acción recomendada</span>
+            <span className={"fl-srcpill" + (live ? " is-live" : "")} title={live ? "Calculado por el motor Monte Carlo" : "Backend no disponible — cálculo local"}>
+              {live ? "Motor en vivo" : "Cálculo local"}
+            </span>
+          </div>
           <ConfidenceBadge rec={rec} />
           <ActionSequence rec={rec} onHoverField={onHoverField} />
         </div>
+
+        {engine && <RegretCard r={engine.regret_meter} simMs={engine.sim_ms} />}
 
         <Sustainability s={rec.sustentabilidad} />
       </div>
@@ -272,16 +330,65 @@ export default function ManagerView({ t, fields }: { t: TweakState; fields: Fiel
   const [playing, setPlaying] = React.useState(false);
   const [scenario, setScenario] = React.useState<ScenarioKey>("esperado");
 
-  const rec = React.useMemo(() => flComputeRecommendation(ventana, personal), [ventana, personal]);
+  // Live engine outputs (null until/unless the backend answers).
+  const [engine, setEngine] = React.useState<EngineRecommendation | null>(null);
+  const [riskArrays, setRiskArrays] = React.useState<Record<string, Record<string, number[]>> | null>(null);
 
-  // risk per lote for the current day + scenario
+  // Recommendation: prefer the live engine, fall back to the client-side stub.
+  const localRec = React.useMemo(() => flComputeRecommendation(ventana, personal), [ventana, personal]);
+  const rec: Recommendation = engine ?? localRec;
+
+  // Fetch the engine recommendation, debounced on the sliders. personal →
+  // operators; "ventana de clima" (días de buen clima) → rain arrival (más días
+  // ⇒ la lluvia entra más tarde). Falls back to the local stub on any error.
+  React.useEffect(() => {
+    let cancelled = false;
+    const id = setTimeout(() => {
+      fetchRecommendation({ operators: personal, shift_window_hours: 10, rain_eta_h: 8 + ventana })
+        .then((r) => {
+          if (!cancelled) setEngine(r);
+        })
+        .catch(() => {
+          if (!cancelled) setEngine(null);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [ventana, personal]);
+
+  // Fetch the 14-day risk arrays for all three scenarios once on mount.
+  React.useEffect(() => {
+    let cancelled = false;
+    const keys: ScenarioKey[] = ["optimista", "esperado", "pesimista"];
+    Promise.all(keys.map((k) => fetchRiskForecast(k)))
+      .then((results) => {
+        if (cancelled) return;
+        const m: Record<string, Record<string, number[]>> = {};
+        keys.forEach((k, i) => (m[k] = results[i].fields));
+        setRiskArrays(m);
+      })
+      .catch(() => {
+        if (!cancelled) setRiskArrays(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // risk per lote for the current day + scenario — from the engine arrays when
+  // available (per-field fallback for lots the engine doesn't know, e.g. drawn
+  // in the editor), otherwise the client-side curve.
   const riskById = React.useMemo(() => {
     const out: Record<string, number> = {};
+    const arrs = riskArrays ? riskArrays[scenario] : null;
     fields.forEach((f) => {
-      out[f.id] = flRiskFor(f, day, scenario);
+      const arr = arrs ? arrs[f.id] : null;
+      out[f.id] = arr ? riskAt(arr, day) : flRiskFor(f, day, scenario);
     });
     return out;
-  }, [fields, day, scenario]);
+  }, [fields, day, scenario, riskArrays]);
 
   // forecast metrics
   const forecast = React.useMemo<ForecastData>(() => {
@@ -386,6 +493,8 @@ export default function ManagerView({ t, fields }: { t: TweakState; fields: Fiel
         onHoverField={setSelected}
         floating={floating}
         forecast={forecast}
+        engine={engine}
+        live={engine !== null}
       />
     </div>
   );

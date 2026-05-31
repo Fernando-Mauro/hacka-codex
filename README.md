@@ -1,3 +1,35 @@
+# FieldLoop
+
+A predictive decision layer for harvest management (John Deere × Tec de
+Monterrey hackathon). Two parts in one repo:
+
+- **`app/`** — the Next.js 16 / React 19 frontend (FieldLoop UI: satellite map,
+  recommendation panel, 14-day "Ver Futuro" timeline, operator card, lot editor).
+- **`backend/`** — a FastAPI + numpy **Monte Carlo decision engine** (robust
+  harvest order + Regret Meter). See [`backend/README.md`](backend/README.md).
+
+## Full-stack local dev
+
+Run both — the frontend calls the engine, and **falls back to its built-in
+client-side calculations if the backend isn't running**, so either can run alone.
+
+```bash
+# Terminal 1 — decision engine (FastAPI) on :8000
+cd backend && uv sync && uv run uvicorn fieldloop.api:app --reload --port 8000
+
+# Terminal 2 — frontend on :3000
+bun install && bun run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). In the Manager view the
+recommendation panel shows a green **"Motor en vivo"** pill and a **Regret Meter**
+card when the engine is reachable; it switches to **"Cálculo local"** otherwise.
+
+The frontend reads the backend URL from `NEXT_PUBLIC_API_BASE` (see
+[`.env.example`](.env.example); defaults to `http://localhost:8000`).
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

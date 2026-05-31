@@ -17,6 +17,15 @@ import {
   type LatLng,
   type Machine,
 } from "./data";
+import { validateLot, type LotValidation } from "./api";
+
+// Zona de demo (área metropolitana de Monterrey). Debe coincidir con MTY_BBOX
+// del backend; el editor impide dibujar/panear fuera de aquí.
+const MTY_BBOX = { south: 25.4, west: -100.6, north: 25.98, east: -99.9 };
+const MTY_BOUNDS: L.LatLngBoundsLiteral = [
+  [MTY_BBOX.south, MTY_BBOX.west],
+  [MTY_BBOX.north, MTY_BBOX.east],
+];
 
 // Geoman augments L.Map / L.Layer with a `pm` property at runtime. The free
 // build's bundled types are loose, so we reach it through a narrow cast.
@@ -44,7 +53,8 @@ interface FieldEditorMapProps {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onGeometryChange: (id: string, ll: LatLng[], ha: number) => void;
-  onCreateLot: (ll: LatLng[], ha: number) => void;
+  onDraw: (ll: LatLng[], ha: number) => void;
+  onEditValidate: (id: string, ll: LatLng[]) => void;
   drawing: boolean;
   onDrawDone: () => void;
 }
@@ -55,18 +65,19 @@ function FieldEditorMap({
   selectedId,
   onSelect,
   onGeometryChange,
-  onCreateLot,
+  onDraw,
+  onEditValidate,
   drawing,
   onDrawDone,
 }: FieldEditorMapProps) {
   const elRef = React.useRef<HTMLDivElement | null>(null);
   const mapRef = React.useRef<L.Map | null>(null);
   const layersRef = React.useRef<Record<string, L.Polygon>>({});
-  const refs = React.useRef({ onSelect, onGeometryChange, onCreateLot, onDrawDone, fields });
+  const refs = React.useRef({ onSelect, onGeometryChange, onDraw, onEditValidate, onDrawDone, fields });
   // Geoman event handlers (bound once at init) read the latest callbacks/fields
   // through this ref; refresh it in an effect rather than during render.
   React.useEffect(() => {
-    refs.current = { onSelect, onGeometryChange, onCreateLot, onDrawDone, fields };
+    refs.current = { onSelect, onGeometryChange, onDraw, onEditValidate, onDrawDone, fields };
   });
 
   // init once
@@ -76,6 +87,9 @@ function FieldEditorMap({
       center: FL_MAP_CENTER,
       zoom: FL_MAP_ZOOM,
       zoomControl: true,
+      maxBounds: MTY_BOUNDS, // acota la demo a Monterrey
+      maxBoundsViscosity: 1.0,
+      minZoom: 11,
     });
     mapRef.current = map;
 
@@ -83,6 +97,15 @@ function FieldEditorMap({
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       { maxZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }
     ).addTo(map);
+
+    // Límite visible de la zona de demo.
+    L.rectangle(MTY_BOUNDS, {
+      color: "#e3a92c",
+      weight: 1.5,
+      dashArray: "6 6",
+      fill: false,
+      interactive: false,
+    }).addTo(map);
 
     mapPm(map).setGlobalOptions({ allowSelfIntersection: false, snappable: true, snapDistance: 16 });
 
@@ -102,8 +125,8 @@ function FieldEditorMap({
     map.on("pm:create", (e: L.LeafletEvent) => {
       const layer = (e as unknown as { layer: L.Polygon }).layer;
       const latlngs = (layer.getLatLngs()[0] as L.LatLng[]).map((p) => [p.lat, p.lng] as LatLng);
-      map.removeLayer(layer);
-      refs.current.onCreateLot(latlngs, flPolygonHa(latlngs));
+      map.removeLayer(layer); // se re-crea sólo si pasa la validación de uso de suelo
+      refs.current.onDraw(latlngs, flPolygonHa(latlngs));
       refs.current.onDrawDone();
     });
 
@@ -167,7 +190,12 @@ function FieldEditorMap({
           refs.current.onGeometryChange(f.id, latlngs, flPolygonHa(latlngs));
         };
         poly.on("pm:edit", sync);
-        poly.on("pm:update", sync);
+        poly.on("pm:update", () => {
+          sync();
+          // revalida el uso de suelo sólo al terminar de editar (no en cada arrastre)
+          const latlngs = (poly.getLatLngs()[0] as L.LatLng[]).map((p) => [p.lat, p.lng] as LatLng);
+          refs.current.onEditValidate(f.id, latlngs);
+        });
         layersRef.current[f.id] = poly;
       } else {
         existing.setStyle({ color: meta.hex, fillColor: meta.hex });
@@ -229,9 +257,14 @@ interface EditorViewProps {
   setFields: React.Dispatch<React.SetStateAction<Field[]>>;
 }
 
+type Notice = { kind: "ok" | "err" | "warn"; text: string };
+
 export default function EditorView({ fields, machines, setFields }: EditorViewProps) {
   const [selected, setSelected] = React.useState<string | null>(fields[0] ? fields[0].id : null);
   const [drawing, setDrawing] = React.useState(false);
+  const [validating, setValidating] = React.useState(false);
+  const [notice, setNotice] = React.useState<Notice | null>(null);
+  const [warnings, setWarnings] = React.useState<Record<string, LotValidation>>({});
 
   const updateField = (id: string, patch: Partial<Field>) =>
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
@@ -258,9 +291,54 @@ export default function EditorView({ fields, machines, setFields }: EditorViewPr
     setSelected(id);
   };
 
+  // Validate a freshly drawn lot against the SIG before adding it.
+  const onDraw = async (ll: LatLng[], ha: number) => {
+    setValidating(true);
+    setNotice(null);
+    try {
+      const v = await validateLot(ll);
+      if (v.valido) {
+        onCreateLot(ll, ha);
+        setNotice(
+          v.clase === "no_verificado"
+            ? { kind: "warn", text: v.motivo }
+            : { kind: "ok", text: "Lote creado · uso de suelo apto para cultivo." }
+        );
+      } else {
+        setNotice({ kind: "err", text: "No se creó el lote — " + v.motivo });
+      }
+    } catch {
+      onCreateLot(ll, ha); // motor SIG no disponible → permitir, sin verificar
+      setNotice({ kind: "warn", text: "No se pudo validar el uso de suelo (backend no disponible); lote creado sin verificar." });
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Re-validate a lot after its geometry is edited; flag it if it now overlaps
+  // water/urban land (non-blocking — the user can fix or delete it).
+  const onEditValidate = async (id: string, ll: LatLng[]) => {
+    try {
+      const v = await validateLot(ll);
+      setWarnings((w) => {
+        const next = { ...w };
+        if (v.valido) delete next[id];
+        else next[id] = v;
+        return next;
+      });
+    } catch {
+      /* sin verificación, no bloquear */
+    }
+  };
+
   const onDeleteLot = (id: string) => {
     setFields((prev) => prev.filter((f) => f.id !== id));
     setSelected((cur) => (cur === id ? null : cur));
+    setWarnings((w) => {
+      const next = { ...w };
+      delete next[id];
+      return next;
+    });
   };
 
   const resetAll = () => {
@@ -279,7 +357,7 @@ export default function EditorView({ fields, machines, setFields }: EditorViewPr
             <span className="fl-manager__sub">Ajusta los límites al terreno real del satélite</span>
           </div>
           <div className="fl-edithint">
-            Arrastra los puntos para reformar · usa los puntos intermedios para añadir vértices
+            Zona de demo: Monterrey, N.L. · validamos el uso de suelo contra OpenStreetMap (no se permiten lotes sobre agua o zona urbana)
           </div>
         </div>
         <FieldEditorMap
@@ -288,7 +366,8 @@ export default function EditorView({ fields, machines, setFields }: EditorViewPr
           selectedId={selected}
           onSelect={setSelected}
           onGeometryChange={onGeometryChange}
-          onCreateLot={onCreateLot}
+          onDraw={onDraw}
+          onEditValidate={onEditValidate}
           drawing={drawing}
           onDrawDone={() => setDrawing(false)}
         />
@@ -300,16 +379,19 @@ export default function EditorView({ fields, machines, setFields }: EditorViewPr
             {drawing ? "✕ Cancelar dibujo" : "＋ Dibujar nuevo lote"}
           </button>
           {drawing && <p className="fl-drawhint">Haz clic para colocar vértices. Doble clic para cerrar el lote.</p>}
+          {validating && <div className="fl-validate">Validando uso de suelo contra el SIG…</div>}
+          {notice && <div className={"fl-notice fl-notice--" + notice.kind}>{notice.text}</div>}
 
           <div className="fl-lotlist">
             {fields.map((f) => {
               const meta = FL_ESTADO_META[f.estado];
               const isSel = f.id === selected;
               return (
-                <div key={f.id} className={"fl-lotrow" + (isSel ? " is-sel" : "")}>
+                <div key={f.id} className={"fl-lotrow" + (isSel ? " is-sel" : "") + (warnings[f.id] ? " has-warn" : "")}>
                   <button className="fl-lotrow__head" onClick={() => setSelected(isSel ? null : f.id)}>
                     <span className="fl-dot" style={{ background: meta.hex }} />
                     <span className="fl-lotrow__name">{f.nombre}</span>
+                    {warnings[f.id] && <span className="fl-lotwarn" title={warnings[f.id].motivo}>⚠ {warnings[f.id].clase}</span>}
                     <span className="fl-lotrow__ha fl-mono">{f.superficie} ha</span>
                   </button>
                   {isSel && (
